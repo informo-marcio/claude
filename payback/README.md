@@ -17,11 +17,61 @@ a versão criada no Manus (`payback.informo.com.br`).
 ## Estado
 
 - [x] Motor financeiro com testes (`internal/finance`)
-- [ ] Banco de dados e API
-- [ ] Autenticação
+- [x] Banco de dados (`internal/store`) e API (`internal/api`)
+- [ ] Autenticação pelo Entra ID (hoje só existe o modo de desenvolvimento)
 - [ ] Interface
 - [ ] Relatório PDF e Excel
 - [ ] Empacotamento Docker
+
+## Como rodar em desenvolvimento
+
+```bash
+export DATABASE_URL="postgres://usuario:senha@127.0.0.1:5432/payback"
+export DEV_USER_EMAIL="voce@informo.com.br"   # entra sem login; só em localhost
+export ADMIN_EMAILS="voce@informo.com.br"     # quem administra política e catálogo
+go run ./cmd/server                           # escuta em 127.0.0.1:8080
+```
+
+O servidor cria as tabelas e carrega a política e o catálogo iniciais na
+primeira execução. Sem `DEV_USER_EMAIL` ele não sobe, e com essa variável ele
+só aceita escutar em localhost: não existe caminho para produção sem login.
+
+Testes de integração usam um PostgreSQL real, com um schema descartável por
+teste:
+
+```bash
+TEST_DATABASE_URL="postgres://usuario:senha@127.0.0.1:5432/payback_test" go test ./...
+```
+
+## Banco e API
+
+- **Nada de resultado gravado**: a análise é calculada a cada leitura a partir
+  dos itens e da política, então não existe resultado defasado.
+- **Política versionada**: cada alteração cria uma versão. Rascunhos usam a
+  vigente; ao sair de rascunho o projeto congela a versão daquele momento.
+- **Análise bloqueada**: quando falta premissa (câmbio, data de início, consumo
+  de pontos) a API devolve `blocked` com as pendências, nunca números parciais.
+- **Permissões**: o dono edita; compartilhamento e administrador só leem;
+  quem não tem acesso recebe 404. Política e catálogo são do administrador.
+- **Concorrência**: projeto, política e catálogo recusam gravação feita sobre
+  uma versão antiga (HTTP 409).
+- **Carteira**: `/api/dashboard` agrega por status e deixa de fora os projetos
+  marcados como teste.
+
+| Rota | Uso |
+|---|---|
+| `GET /api/me` | Usuário atual |
+| `GET /api/dashboard` | Indicadores da carteira por status |
+| `GET,POST /api/projects` | Lista com resumo; criação |
+| `GET,PUT,DELETE /api/projects/{id}` | Projeto com itens e análise |
+| `POST /api/projects/{id}/items` e `PUT,DELETE .../items/{itemId}` | Itens |
+| `POST .../items/{itemId}/duplicate` | Duplicar item |
+| `GET,POST /api/projects/{id}/shares` e `DELETE .../shares/{userId}` | Compartilhamento por e-mail |
+| `GET /api/projects/{id}/events` | Histórico |
+| `GET,PUT /api/settings` | Política financeira |
+| `GET /api/catalog`, `PUT /api/catalog/programs/{key}`, `PUT /api/catalog/models/{id}` | Catálogo de pontos |
+| `GET /api/difal` | Calculadora de DIFAL |
+| `GET /healthz` | Verificação de saúde (inclui o banco) |
 
 ## Motor financeiro
 
@@ -62,7 +112,8 @@ projeto real observado no portal anterior.
    em vez de uma fórmula fechada que falhava quando a comissão era zero ou a
    implantação cobria o CAPEX. Sem solução, o resultado é "indisponível".
 4. **Câmbio**: os itens guardam o preço na moeda original e a conversão
-   acontece a cada cálculo, então mudar o câmbio reconverte CAPEX e DIFAL.
+   acontece a cada cálculo, então mudar o câmbio reconverte CAPEX, DIFAL e
+   licenças por pontos. A proposta tem uma única cotação.
 5. **Entradas inválidas**: são recusadas com erro, não corrigidas em silêncio.
    O prazo precisa existir na política financeira.
 6. **Unidades**: toda taxa é fração decimal, inclusive a TIR.
