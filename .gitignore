@@ -1,0 +1,5 @@
+# binários e dependências
+/payback/bin/
+/payback/web/node_modules/
+/payback/web/dist/
+.env
