@@ -60,10 +60,14 @@ var errNotFound = &apiError{Status: http.StatusNotFound, Message: "Registro não
 
 type handler func(w http.ResponseWriter, r *http.Request, u store.User) error
 
-// Handler devolve o roteador da API.
-func (s *Server) Handler() http.Handler {
+// Handler devolve o roteador da API. Rotas extras (as de login) são
+// registradas por extra, fora da autenticação.
+func (s *Server) Handler(extra ...func(*http.ServeMux)) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.health)
+	for _, register := range extra {
+		register(mux)
+	}
 
 	route := func(pattern string, h handler) { mux.HandleFunc(pattern, s.wrap(h)) }
 	route("GET /api/me", s.me)

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -43,11 +44,6 @@ func run(log *slog.Logger) error {
 	}
 	addr := env("LISTEN_ADDR", "127.0.0.1:8080")
 
-	authenticator, err := chooseAuthenticator(addr, log)
-	if err != nil {
-		return err
-	}
-
 	st, err := store.Open(ctx, dbURL)
 	if err != nil {
 		return err
@@ -60,10 +56,15 @@ func run(log *slog.Logger) error {
 		return err
 	}
 
+	authenticator, routes, err := chooseAuthenticator(ctx, addr, st, log)
+	if err != nil {
+		return err
+	}
+
 	admins := strings.Split(os.Getenv("ADMIN_EMAILS"), ",")
 	srv := &http.Server{
 		Addr:              addr,
-		Handler:           api.New(st, authenticator, admins, log).Handler(),
+		Handler:           api.New(st, authenticator, admins, log).Handler(routes...),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      60 * time.Second,
@@ -87,21 +88,45 @@ func run(log *slog.Logger) error {
 	return nil
 }
 
-// chooseAuthenticator escolhe como identificar o usuário. O login pelo Entra
-// ID ainda não foi implementado; até lá o servidor só sobe em modo de
-// desenvolvimento, e esse modo só é aceito escutando em localhost.
-func chooseAuthenticator(addr string, log *slog.Logger) (auth.Authenticator, error) {
+// chooseAuthenticator escolhe como identificar o usuário. Com as variáveis
+// ENTRA_* o login é pelo Entra ID. Sem elas, o servidor só sobe em modo de
+// desenvolvimento (DEV_USER_EMAIL), e esse modo só é aceito em localhost.
+func chooseAuthenticator(ctx context.Context, addr string, st *store.Store, log *slog.Logger) (auth.Authenticator, []func(*http.ServeMux), error) {
+	tenant, clientID, secret := os.Getenv("ENTRA_TENANT_ID"), os.Getenv("ENTRA_CLIENT_ID"), os.Getenv("ENTRA_CLIENT_SECRET")
 	devEmail := os.Getenv("DEV_USER_EMAIL")
+
+	if tenant != "" || clientID != "" || secret != "" {
+		if devEmail != "" {
+			return nil, nil, errors.New("DEV_USER_EMAIL não pode ser usado junto com o login pelo Entra ID")
+		}
+		if tenant == "" || clientID == "" || secret == "" {
+			return nil, nil, errors.New("defina ENTRA_TENANT_ID, ENTRA_CLIENT_ID e ENTRA_CLIENT_SECRET")
+		}
+		hours, err := strconv.Atoi(env("SESSION_HOURS", "12"))
+		if err != nil || hours < 1 || hours > 168 {
+			return nil, nil, errors.New("SESSION_HOURS deve estar entre 1 e 168")
+		}
+		o, err := auth.NewOIDC(ctx, auth.OIDCConfig{
+			Issuer: auth.EntraIssuer(tenant), ClientID: clientID, ClientSecret: secret, TenantID: tenant,
+			PublicURL: env("PUBLIC_URL", "http://localhost:8080"), SessionTTL: time.Duration(hours) * time.Hour,
+		}, st, log)
+		if err != nil {
+			return nil, nil, err
+		}
+		log.Info("login pelo Entra ID habilitado", "tenant", tenant)
+		return o, []func(*http.ServeMux){o.Register}, nil
+	}
+
 	if devEmail == "" {
-		return nil, errors.New("login pelo Entra ID ainda não implementado; para desenvolvimento local defina DEV_USER_EMAIL")
+		return nil, nil, errors.New("configure o login (ENTRA_TENANT_ID, ENTRA_CLIENT_ID, ENTRA_CLIENT_SECRET) ou, só para desenvolvimento local, DEV_USER_EMAIL")
 	}
 	host, _, err := net.SplitHostPort(addr)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if ip := net.ParseIP(host); host != "localhost" && (ip == nil || !ip.IsLoopback()) {
-		return nil, errors.New("DEV_USER_EMAIL só é aceito com LISTEN_ADDR em localhost")
+		return nil, nil, errors.New("DEV_USER_EMAIL só é aceito com LISTEN_ADDR em localhost")
 	}
 	log.Warn("MODO DE DESENVOLVIMENTO: sem login, todas as requisições entram como " + devEmail)
-	return auth.Fixed{Identity: auth.Identity{Email: devEmail, Name: env("DEV_USER_NAME", devEmail)}}, nil
+	return auth.Fixed{Identity: auth.Identity{Email: devEmail, Name: env("DEV_USER_NAME", devEmail)}}, nil, nil
 }

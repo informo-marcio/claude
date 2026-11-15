@@ -18,7 +18,7 @@ a versão criada no Manus (`payback.informo.com.br`).
 
 - [x] Motor financeiro com testes (`internal/finance`)
 - [x] Banco de dados (`internal/store`) e API (`internal/api`)
-- [ ] Autenticação pelo Entra ID (hoje só existe o modo de desenvolvimento)
+- [x] Login pelo Microsoft Entra ID (`internal/auth`)
 - [ ] Interface
 - [ ] Relatório PDF e Excel
 - [ ] Empacotamento Docker
@@ -33,8 +33,27 @@ go run ./cmd/server                           # escuta em 127.0.0.1:8080
 ```
 
 O servidor cria as tabelas e carrega a política e o catálogo iniciais na
-primeira execução. Sem `DEV_USER_EMAIL` ele não sobe, e com essa variável ele
-só aceita escutar em localhost: não existe caminho para produção sem login.
+primeira execução. O modo `DEV_USER_EMAIL` entra sem login, só aceita escutar
+em localhost e não pode ser combinado com as variáveis `ENTRA_*`: não existe
+caminho para produção sem login. Todas as variáveis estão em `.env.example`.
+
+## Login
+
+- **Fluxo**: OpenID Connect com código de autorização, PKCE, `state` e
+  `nonce`, contra o Entra ID da Informo (locatário único). O token é validado
+  por assinatura, emissor, audiência, validade e locatário.
+- **Sessão**: fica no banco. O navegador recebe só um token aleatório em
+  cookie `HttpOnly`, `Secure`, `SameSite=Lax` (prefixo `__Host-` em HTTPS), e
+  o banco guarda o hash dele. Dura `SESSION_HOURS` (padrão 12 h).
+- **Logout**: apaga a sessão no servidor; um cookie copiado deixa de valer.
+- **Rotas**: `GET /auth/login?returnTo=/caminho`, `GET /auth/callback` e
+  `POST /auth/logout`. A API responde 401 sem sessão e a interface redireciona
+  para `/auth/login`.
+- **Administradores**: os e-mails em `ADMIN_EMAILS` são promovidos ao entrar.
+
+Os testes do login rodam contra um provedor OpenID Connect simulado. O login
+contra o Entra real só pode ser verificado em uma máquina com acesso a
+`login.microsoftonline.com` e com o segredo do cliente.
 
 Testes de integração usam um PostgreSQL real, com um schema descartável por
 teste:

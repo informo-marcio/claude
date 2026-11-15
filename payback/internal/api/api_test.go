@@ -679,3 +679,37 @@ func TestDifalCalculatorAndHealth(t *testing.T) {
 		t.Errorf("papel = %s", me.Role)
 	}
 }
+
+func TestSessionsInDatabase(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	id := auth.Identity{Subject: "oid-1", Email: owner, Name: "Dono"}
+	valid, expired := []byte("hash-valido"), []byte("hash-vencido")
+	if err := e.st.CreateSession(ctx, valid, id, time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.st.CreateSession(ctx, expired, id, time.Now().Add(-time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	got, err := e.st.SessionIdentity(ctx, valid)
+	if err != nil || got != id {
+		t.Fatalf("sessão válida: %+v, %v", got, err)
+	}
+	if _, err := e.st.SessionIdentity(ctx, expired); err != store.ErrNotFound {
+		t.Errorf("sessão vencida: %v", err)
+	}
+	if err := e.st.DeleteSession(ctx, valid); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.st.SessionIdentity(ctx, valid); err != store.ErrNotFound {
+		t.Errorf("sessão encerrada: %v", err)
+	}
+	// Criar uma sessão nova limpa as vencidas.
+	if err := e.st.CreateSession(ctx, []byte("outra"), id, time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	var n int
+	if err := e.conn.QueryRow(ctx, "SELECT count(*) FROM "+e.schema+".sessions").Scan(&n); err != nil || n != 1 {
+		t.Errorf("sessões restantes = %d (%v)", n, err)
+	}
+}
