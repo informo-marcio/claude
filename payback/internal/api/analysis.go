@@ -1,6 +1,7 @@
 package api
 
 import (
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -22,7 +23,23 @@ type Analysis struct {
 	Scenarios         *finance.Scenarios       `json:"scenarios,omitempty"`
 	Health            *finance.Health          `json:"health,omitempty"`
 	IRR               *finance.IRRAssessment   `json:"irr,omitempty"`
+	// Sensitivity mostra o cenário pessimista com a mensalidade variando.
+	Sensitivity []SensitivityRow `json:"sensitivity,omitempty"`
 }
+
+// SensitivityRow é o resultado com a mensalidade alterada em Delta.
+type SensitivityRow struct {
+	// Delta é a variação da mensalidade como fração (-0.1 = 10% menor).
+	Delta          float64           `json:"delta"`
+	MonthlyRevenue float64           `json:"monthlyRevenue"`
+	TotalRevenue   float64           `json:"totalRevenue"`
+	NPV            float64           `json:"npv"`
+	PaybackMonth   *int              `json:"paybackMonth"`
+	MonthlyIRR     *float64          `json:"monthlyIrr"`
+	Viability      finance.Viability `json:"viability"`
+}
+
+var sensitivityDeltas = []float64{-0.2, -0.1, 0, 0.1, 0.2}
 
 func blocked(sv store.SettingsVersion, err error, extra ...string) Analysis {
 	blockers := extra
@@ -89,7 +106,7 @@ func analyze(p store.Project, items []store.Item, sv store.SettingsVersion) Anal
 	if err != nil {
 		return blocked(sv, err)
 	}
-	scenarios, err := finance.CalculateScenarios(finance.Input{
+	input := finance.Input{
 		Capex:                 capex.Total,
 		MonthlyRevenue:        p.MonthlyRevenue,
 		DurationMonths:        p.DurationMonths,
@@ -98,16 +115,30 @@ func analyze(p store.Project, items []store.Item, sv store.SettingsVersion) Anal
 		SupportCost:           p.MonthlySupportCost,
 		LicensingCosts:        licensing.MonthlyCosts,
 		Settings:              sv.Policy.Settings,
-	})
+	}
+	scenarios, err := finance.CalculateScenarios(input)
 	if err != nil {
 		return blocked(sv, err)
+	}
+	var sensitivity []SensitivityRow
+	for _, delta := range sensitivityDeltas {
+		varied := input
+		varied.MonthlyRevenue = math.Round(input.MonthlyRevenue*(1+delta)*100) / 100
+		r, err := finance.Calculate(varied)
+		if err != nil {
+			return blocked(sv, err)
+		}
+		sensitivity = append(sensitivity, SensitivityRow{
+			Delta: delta, MonthlyRevenue: varied.MonthlyRevenue, TotalRevenue: r.TotalRevenue, NPV: r.NPV,
+			PaybackMonth: r.PaybackMonth, MonthlyIRR: r.MonthlyIRR, Viability: r.Viability,
+		})
 	}
 	// A decisão do portal é sempre a do cenário pessimista.
 	health := finance.ContractHealth(p.DurationMonths, scenarios.Pessimistic.PaybackMonth)
 	irr := finance.AssessIRR(scenarios.Pessimistic.MonthlyIRR, sv.Policy.Settings.IRRAlertThreshold)
 	return Analysis{
 		Status: "ready", SettingsVersionID: sv.ID, Capex: &capex, Licensing: &licensing,
-		Scenarios: &scenarios, Health: &health, IRR: &irr,
+		Scenarios: &scenarios, Health: &health, IRR: &irr, Sensitivity: sensitivity,
 	}
 }
 
@@ -284,5 +315,29 @@ func (s *Server) difal(w http.ResponseWriter, r *http.Request, _ store.User) err
 		return badRequest(err.Error())
 	}
 	writeJSON(w, http.StatusOK, res)
+	return nil
+}
+
+// simulate recalcula o projeto com outra mensalidade, sem gravar nada. É o
+// simulador "e se eu cobrar X?" da tela do projeto.
+func (s *Server) simulate(w http.ResponseWriter, r *http.Request, u store.User) error {
+	p, _, err := s.projectFor(r, u)
+	if err != nil {
+		return err
+	}
+	monthly, err := strconv.ParseFloat(r.URL.Query().Get("monthlyRevenue"), 64)
+	if err != nil || !validAmount(monthly) {
+		return badRequest("Informe a mensalidade a simular.")
+	}
+	items, err := s.store.Items(r.Context(), p.ID)
+	if err != nil {
+		return err
+	}
+	sv, err := s.projectSettings(r, p)
+	if err != nil {
+		return err
+	}
+	p.MonthlyRevenue = monthly
+	writeJSON(w, http.StatusOK, analyze(p, items, sv))
 	return nil
 }

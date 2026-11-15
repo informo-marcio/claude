@@ -713,3 +713,39 @@ func TestSessionsInDatabase(t *testing.T) {
 		t.Errorf("sessões restantes = %d (%v)", n, err)
 	}
 }
+
+func TestSensitivityAndSimulation(t *testing.T) {
+	e := newEnv(t)
+	d := e.createProject(owner, baseProject())
+	e.addItem(owner, d.Project.ID, map[string]any{"name": "Fortinet 90G", "kind": "hardware", "quantity": 1, "unitPrice": 9000, "originState": "SP"})
+	d = e.addItem(owner, d.Project.ID, map[string]any{"name": "Licença", "kind": "software", "quantity": 1, "unitPrice": 25000})
+
+	// Mesmos números da tabela de sensibilidade do portal anterior.
+	want := map[float64]struct {
+		npv     float64
+		payback int
+	}{-0.2: {8960.22, 28}, -0.1: {13747.24, 25}, 0: {18534.27, 23}, 0.1: {23321.29, 21}, 0.2: {28108.31, 19}}
+	if len(d.Analysis.Sensitivity) != 5 {
+		t.Fatalf("sensibilidade com %d linhas", len(d.Analysis.Sensitivity))
+	}
+	for _, row := range d.Analysis.Sensitivity {
+		w := want[row.Delta]
+		near(t, fmt.Sprintf("VPL em %+.0f%%", row.Delta*100), row.NPV, w.npv)
+		if row.PaybackMonth == nil || *row.PaybackMonth != w.payback {
+			t.Errorf("payback em %+.0f%% = %v, esperado %d", row.Delta*100, row.PaybackMonth, w.payback)
+		}
+	}
+
+	// Simular não grava: a mensalidade do projeto continua a mesma.
+	path := fmt.Sprintf("/api/projects/%d", d.Project.ID)
+	var sim Analysis
+	e.must(http.StatusOK, owner, "GET", path+"/simulate?monthlyRevenue=2000", nil, &sim)
+	near(t, "VPL simulado", sim.Scenarios.Pessimistic.NPV, 8960.22)
+	e.must(http.StatusOK, owner, "GET", path, nil, &d)
+	if d.Project.MonthlyRevenue != 2500 {
+		t.Errorf("simular alterou a mensalidade: %v", d.Project.MonthlyRevenue)
+	}
+	e.must(http.StatusUnprocessableEntity, owner, "GET", path+"/simulate?monthlyRevenue=abc", nil, nil)
+	e.must(http.StatusNotFound, other, "GET", path+"/simulate?monthlyRevenue=2000", nil, nil)
+	e.must(http.StatusNotFound, owner, "GET", "/api/nao-existe", nil, nil)
+}

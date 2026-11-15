@@ -17,6 +17,7 @@ import (
 	"github.com/informo-marcio/claude/payback/internal/api"
 	"github.com/informo-marcio/claude/payback/internal/auth"
 	"github.com/informo-marcio/claude/payback/internal/store"
+	"github.com/informo-marcio/claude/payback/internal/webui"
 )
 
 func main() {
@@ -60,11 +61,13 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	// Tudo que não é API nem login é a interface.
+	routes = append(routes, func(mux *http.ServeMux) { mux.Handle("/", webui.Handler()) })
 
 	admins := strings.Split(os.Getenv("ADMIN_EMAILS"), ",")
 	srv := &http.Server{
 		Addr:              addr,
-		Handler:           api.New(st, authenticator, admins, log).Handler(routes...),
+		Handler:           webui.SecurityHeaders(api.New(st, authenticator, admins, log).Handler(routes...)),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      60 * time.Second,

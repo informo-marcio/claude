@@ -87,6 +87,7 @@ func (s *Server) Handler(extra ...func(*http.ServeMux)) http.Handler {
 	route("PUT /api/projects/{id}", s.updateProject)
 	route("DELETE /api/projects/{id}", s.deleteProject)
 	route("GET /api/projects/{id}/events", s.listEvents)
+	route("GET /api/projects/{id}/simulate", s.simulate)
 
 	route("POST /api/projects/{id}/items", s.createItem)
 	route("PUT /api/projects/{id}/items/{itemId}", s.updateItem)
@@ -96,6 +97,9 @@ func (s *Server) Handler(extra ...func(*http.ServeMux)) http.Handler {
 	route("GET /api/projects/{id}/shares", s.listShares)
 	route("POST /api/projects/{id}/shares", s.addShare)
 	route("DELETE /api/projects/{id}/shares/{userId}", s.removeShare)
+
+	// Rota de API inexistente responde 404 em JSON, não a página da interface.
+	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) { s.fail(w, r, errNotFound) })
 	return mux
 }
 

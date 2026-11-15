@@ -3,3 +3,5 @@
 /payback/web/node_modules/
 /payback/web/dist/
 .env
+/payback/internal/webui/dist/*
+!/payback/internal/webui/dist/.keep

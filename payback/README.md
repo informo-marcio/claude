@@ -19,7 +19,7 @@ a versão criada no Manus (`payback.informo.com.br`).
 - [x] Motor financeiro com testes (`internal/finance`)
 - [x] Banco de dados (`internal/store`) e API (`internal/api`)
 - [x] Login pelo Microsoft Entra ID (`internal/auth`)
-- [ ] Interface
+- [x] Interface React (`web/`), embutida no binário
 - [ ] Relatório PDF e Excel
 - [ ] Empacotamento Docker
 
@@ -36,6 +36,24 @@ O servidor cria as tabelas e carrega a política e o catálogo iniciais na
 primeira execução. O modo `DEV_USER_EMAIL` entra sem login, só aceita escutar
 em localhost e não pode ser combinado com as variáveis `ENTRA_*`: não existe
 caminho para produção sem login. Todas as variáveis estão em `.env.example`.
+
+## Interface
+
+```bash
+make build        # compila web/ e gera bin/payback com a interface embutida
+cd web && npm run dev   # desenvolvimento, com proxy para o servidor em :8080
+```
+
+- **Telas**: carteira (por status, com busca e ordenação), novo projeto,
+  projeto (decisão, gráfico de payback, condições, itens, mensalidade e
+  simulador, memória de cálculo, fluxo mensal, histórico, compartilhamento),
+  calculadora de DIFAL, catálogo de pontos, política financeira e auditoria.
+- **Sem cálculo no navegador**: a interface só exibe o que a API devolve.
+  Simulação e sensibilidade também são calculadas no servidor.
+- **Fontes locais**: Archivo e IBM Plex Sans vão no pacote; a página não
+  carrega nada de terceiros e a política de segurança de conteúdo proíbe.
+- **Logotipo**: o nome "INFORMO" está em texto. Falta trocar pelo arquivo
+  oficial da marca.
 
 ## Login
 
@@ -91,6 +109,7 @@ TEST_DATABASE_URL="postgres://usuario:senha@127.0.0.1:5432/payback_test" go test
 | `POST .../items/{itemId}/duplicate` | Duplicar item |
 | `GET,POST /api/projects/{id}/shares` e `DELETE .../shares/{userId}` | Compartilhamento por e-mail |
 | `GET /api/projects/{id}/events` | Histórico do projeto |
+| `GET /api/projects/{id}/simulate?monthlyRevenue=` | Simular outra mensalidade, sem gravar |
 | `GET /api/audit` | Trilha completa de auditoria (administrador) |
 | `GET,PUT /api/settings` | Política financeira |
 | `GET /api/catalog`, `PUT /api/catalog/programs/{key}`, `PUT /api/catalog/models/{id}` | Catálogo de pontos |
