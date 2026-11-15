@@ -181,7 +181,7 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request, u store.U
 	if err != nil {
 		return err
 	}
-	created, err := s.store.CreateProject(r.Context(), p, u.ID)
+	created, err := s.store.CreateProject(r.Context(), p, actorFor(u, false))
 	if err != nil {
 		return err
 	}
@@ -194,7 +194,7 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request, u store.U
 }
 
 func (s *Server) updateProject(w http.ResponseWriter, r *http.Request, u store.User) error {
-	old, err := s.ownedProject(r, u)
+	old, access, actor, err := s.editableProject(r, u)
 	if err != nil {
 		return err
 	}
@@ -243,11 +243,11 @@ func (s *Server) updateProject(w http.ResponseWriter, r *http.Request, u store.U
 		}
 	}
 
-	updated, err := s.store.UpdateProject(r.Context(), p, u.ID, describeChanges(old, p))
+	updated, err := s.store.UpdateProject(r.Context(), p, actor, describeChanges(old, p))
 	if err != nil {
 		return err
 	}
-	d, err := s.detail(r, updated, accessOwner)
+	d, err := s.detail(r, updated, access)
 	if err != nil {
 		return err
 	}
@@ -263,6 +263,12 @@ var statusLabel = map[string]string{
 // describeChanges resume, para o histórico, o que mudou no projeto.
 func describeChanges(old, p store.Project) string {
 	var parts []string
+	if old.ClientName != p.ClientName || old.Name != p.Name {
+		parts = append(parts, fmt.Sprintf("identificação: %s — %s → %s — %s", old.ClientName, old.Name, p.ClientName, p.Name))
+	}
+	if old.IsTest != p.IsTest {
+		parts = append(parts, fmt.Sprintf("marcado como teste: %v → %v", old.IsTest, p.IsTest))
+	}
 	if old.Status != p.Status {
 		parts = append(parts, fmt.Sprintf("status: %s → %s", statusLabel[old.Status], statusLabel[p.Status]))
 	}
@@ -276,15 +282,38 @@ func describeChanges(old, p store.Project) string {
 		parts = append(parts, fmt.Sprintf("implantação: %s → %s", money(old.ImplementationRevenue), money(p.ImplementationRevenue)))
 	}
 	if !equalPtr(old.ExchangeRate, p.ExchangeRate) {
-		parts = append(parts, "câmbio alterado")
+		parts = append(parts, fmt.Sprintf("câmbio: %s → %s", fmtRate(old.ExchangeRate), fmtRate(p.ExchangeRate)))
 	}
-	if old.ExpectedLossRate != p.ExpectedLossRate || old.MonthlySupportCost != p.MonthlySupportCost {
-		parts = append(parts, "premissas de risco alteradas")
+	if old.ExpectedLossRate != p.ExpectedLossRate {
+		parts = append(parts, fmt.Sprintf("inadimplência: %.2f%% → %.2f%%", old.ExpectedLossRate*100, p.ExpectedLossRate*100))
+	}
+	if old.MonthlySupportCost != p.MonthlySupportCost {
+		parts = append(parts, fmt.Sprintf("suporte: %s → %s", money(old.MonthlySupportCost), money(p.MonthlySupportCost)))
+	}
+	if old.DestState != p.DestState {
+		parts = append(parts, fmt.Sprintf("UF de destino: %s → %s", old.DestState, p.DestState))
+	}
+	if !equalStr(old.ContractStartDate, p.ContractStartDate) {
+		parts = append(parts, "data de início alterada")
 	}
 	if len(parts) == 0 {
 		return "Dados do projeto atualizados"
 	}
 	return "Projeto atualizado: " + strings.Join(parts, "; ")
+}
+
+func fmtRate(v *float64) string {
+	if v == nil {
+		return "sem câmbio"
+	}
+	return fmt.Sprintf("%.4f", *v)
+}
+
+func equalStr(a, b *string) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return *a == *b
 }
 
 func equalPtr(a, b *float64) bool {
@@ -295,11 +324,11 @@ func equalPtr(a, b *float64) bool {
 }
 
 func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request, u store.User) error {
-	p, err := s.ownedProject(r, u)
+	p, _, actor, err := s.editableProject(r, u)
 	if err != nil {
 		return err
 	}
-	if err := s.store.DeleteProject(r.Context(), p.ID); err != nil {
+	if err := s.store.DeleteProject(r.Context(), p.ID, actor); err != nil {
 		return err
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -320,7 +349,7 @@ func (s *Server) listEvents(w http.ResponseWriter, r *http.Request, u store.User
 }
 
 func (s *Server) listShares(w http.ResponseWriter, r *http.Request, u store.User) error {
-	p, err := s.ownedProject(r, u)
+	p, _, _, err := s.editableProject(r, u)
 	if err != nil {
 		return err
 	}
@@ -335,7 +364,7 @@ func (s *Server) listShares(w http.ResponseWriter, r *http.Request, u store.User
 // addShare compartilha por e-mail exato. Não há busca de usuários, para que o
 // portal não sirva de lista de e-mails da empresa.
 func (s *Server) addShare(w http.ResponseWriter, r *http.Request, u store.User) error {
-	p, err := s.ownedProject(r, u)
+	p, _, actor, err := s.editableProject(r, u)
 	if err != nil {
 		return err
 	}
@@ -352,10 +381,10 @@ func (s *Server) addShare(w http.ResponseWriter, r *http.Request, u store.User) 
 		}
 		return err
 	}
-	if target.ID == u.ID {
-		return badRequest("O projeto já é seu.")
+	if target.ID == p.OwnerID {
+		return badRequest("Essa pessoa já é a dona do projeto.")
 	}
-	if err := s.store.AddShare(r.Context(), p.ID, target.ID); err != nil {
+	if err := s.store.AddShare(r.Context(), p.ID, target, actor); err != nil {
 		return err
 	}
 	shares, err := s.store.Shares(r.Context(), p.ID)
@@ -367,7 +396,7 @@ func (s *Server) addShare(w http.ResponseWriter, r *http.Request, u store.User) 
 }
 
 func (s *Server) removeShare(w http.ResponseWriter, r *http.Request, u store.User) error {
-	p, err := s.ownedProject(r, u)
+	p, _, actor, err := s.editableProject(r, u)
 	if err != nil {
 		return err
 	}
@@ -375,7 +404,7 @@ func (s *Server) removeShare(w http.ResponseWriter, r *http.Request, u store.Use
 	if err != nil {
 		return err
 	}
-	if err := s.store.RemoveShare(r.Context(), p.ID, userID); err != nil {
+	if err := s.store.RemoveShare(r.Context(), p.ID, userID, actor); err != nil {
 		return err
 	}
 	w.WriteHeader(http.StatusNoContent)

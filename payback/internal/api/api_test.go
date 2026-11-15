@@ -45,9 +45,11 @@ const (
 )
 
 type env struct {
-	t   *testing.T
-	srv *httptest.Server
-	st  *store.Store
+	t      *testing.T
+	srv    *httptest.Server
+	st     *store.Store
+	conn   *pgx.Conn
+	schema string
 }
 
 func newEnv(t *testing.T) *env {
@@ -90,7 +92,7 @@ func newEnv(t *testing.T) *env {
 		conn.Exec(ctx, "DROP SCHEMA "+schema+" CASCADE") //nolint:errcheck
 		conn.Close(ctx)
 	})
-	return &env{t: t, srv: srv, st: st}
+	return &env{t: t, srv: srv, st: st, conn: conn, schema: schema}
 }
 
 // call faz uma requisição e decodifica a resposta em out (se não for nil).
@@ -290,15 +292,6 @@ func TestProjectPermissions(t *testing.T) {
 	e.must(http.StatusForbidden, other, "GET", path+"/shares", nil, nil)
 	e.must(http.StatusForbidden, other, "POST", path+"/shares", map[string]any{"email": admin}, nil)
 
-	// Administrador lê a carteira inteira, mas não edita projeto alheio.
-	var adminView projectDetail
-	e.must(http.StatusOK, admin, "GET", path, nil, &adminView)
-	if adminView.Access != accessAdmin {
-		t.Errorf("acesso do admin = %s", adminView.Access)
-	}
-	e.must(http.StatusForbidden, admin, "PUT", path, updateBody(d.Project), nil)
-	e.must(http.StatusForbidden, admin, "DELETE", path, map[string]any{}, nil)
-
 	// Retirar o compartilhamento retira o acesso.
 	var shares []store.Share
 	e.must(http.StatusOK, owner, "GET", path+"/shares", nil, &shares)
@@ -309,6 +302,106 @@ func TestProjectPermissions(t *testing.T) {
 	e.must(http.StatusNotFound, other, "GET", path, nil, nil)
 
 	e.must(http.StatusUnprocessableEntity, owner, "POST", path+"/shares", map[string]any{"email": "ninguem@informo.test"}, nil)
+}
+
+func TestAdminEditsAnyProjectWithAuditTrail(t *testing.T) {
+	e := newEnv(t)
+	d := e.createProject(owner, baseProject())
+	id := d.Project.ID
+	path := fmt.Sprintf("/api/projects/%d", id)
+
+	// O administrador lê e edita projeto alheio, sem virar dono.
+	var view projectDetail
+	e.must(http.StatusOK, admin, "GET", path, nil, &view)
+	if view.Access != accessAdmin {
+		t.Fatalf("acesso do admin = %s", view.Access)
+	}
+	upd := updateBody(view.Project)
+	upd["monthlyRevenue"] = 2800
+	e.must(http.StatusOK, admin, "PUT", path, upd, &view)
+	if view.Project.MonthlyRevenue != 2800 || view.Project.OwnerID != d.Project.OwnerID {
+		t.Errorf("edição do admin: %+v", view.Project)
+	}
+	view = e.addItem(admin, id, map[string]any{"name": "Licença", "kind": "software", "quantity": 1, "unitPrice": 100})
+	if len(view.Items) != 1 {
+		t.Errorf("item incluído pelo admin: %+v", view.Items)
+	}
+	e.must(http.StatusUnprocessableEntity, admin, "POST", path+"/shares", map[string]any{"email": owner}, nil)
+
+	// Quem só recebeu o compartilhamento continua sem editar.
+	e.must(http.StatusOK, other, "GET", "/api/me", nil, nil) // primeiro acesso registra o usuário
+	e.must(http.StatusOK, admin, "POST", path+"/shares", map[string]any{"email": other}, nil)
+	e.must(http.StatusForbidden, other, "PUT", path, updateBody(view.Project), nil)
+
+	// Usuário comum não ganha a edição de projeto alheio.
+	e.must(http.StatusNotFound, "terceiro@informo.test", "PUT", path, updateBody(view.Project), nil)
+}
+
+func TestAuditTrail(t *testing.T) {
+	e := newEnv(t)
+	d := e.createProject(owner, baseProject())
+	id := d.Project.ID
+	path := fmt.Sprintf("/api/projects/%d", id)
+	e.must(http.StatusOK, other, "GET", "/api/me", nil, nil) // registra o usuário
+
+	var view projectDetail
+	e.must(http.StatusOK, admin, "GET", path, nil, &view)
+	upd := updateBody(view.Project)
+	upd["monthlyRevenue"] = 2800
+	e.must(http.StatusOK, admin, "PUT", path, upd, nil)
+	e.addItem(admin, id, map[string]any{"name": "Licença", "kind": "software", "quantity": 1, "unitPrice": 100})
+	e.must(http.StatusOK, admin, "POST", path+"/shares", map[string]any{"email": other}, nil)
+
+	// O histórico do projeto mostra quem fez cada coisa e se foi como admin.
+	var events []store.Event
+	e.must(http.StatusOK, owner, "GET", path+"/events", nil, &events)
+	if len(events) != 4 {
+		t.Fatalf("histórico com %d eventos, esperado 4: %+v", len(events), events)
+	}
+	created, edited := events[3], events[2]
+	if created.UserEmail != owner || created.AsAdmin {
+		t.Errorf("criação: %+v", created)
+	}
+	if edited.UserEmail != admin || !edited.AsAdmin || !strings.Contains(edited.Description, "R$ 2.500,00 → R$ 2.800,00") {
+		t.Errorf("edição do admin: %+v", edited)
+	}
+	if !strings.Contains(events[0].Description, other) {
+		t.Errorf("compartilhamento: %+v", events[0])
+	}
+
+	// A trilha completa é só do administrador e sobrevive à exclusão.
+	e.must(http.StatusForbidden, owner, "GET", "/api/audit", nil, nil)
+	e.must(http.StatusNoContent, admin, "DELETE", path, map[string]any{}, nil)
+	e.must(http.StatusNotFound, owner, "GET", path, nil, nil)
+	var trail []store.Event
+	e.must(http.StatusOK, admin, "GET", "/api/audit", nil, &trail)
+	if len(trail) != 5 {
+		t.Fatalf("trilha com %d registros, esperado 5", len(trail))
+	}
+	last := trail[0]
+	if last.Description != "Projeto excluído" || !last.AsAdmin || last.UserEmail != admin ||
+		last.ProjectLabel == nil || *last.ProjectLabel != "ZOPONE — FORTIGATE 90G" {
+		t.Errorf("exclusão na trilha: %+v", last)
+	}
+
+	// Política e catálogo também deixam rastro.
+	var current store.SettingsVersion
+	e.must(http.StatusOK, admin, "GET", "/api/settings", nil, &current)
+	current.Policy.Settings.TaxRate = 0.28
+	e.must(http.StatusOK, admin, "PUT", "/api/settings", map[string]any{"baseId": current.ID, "policy": current.Policy}, nil)
+	e.must(http.StatusOK, admin, "PUT", "/api/catalog/programs/fortinet", map[string]any{"priceUsd": 1.1, "revision": 0}, nil)
+	e.must(http.StatusOK, admin, "GET", "/api/audit", nil, &trail)
+	if !strings.Contains(trail[1].Description, "impostos: 26.50% → 28.00%") || !strings.Contains(trail[0].Description, "FortiFlex") {
+		t.Errorf("política e catálogo na trilha: %q / %q", trail[1].Description, trail[0].Description)
+	}
+
+	// Nem a aplicação consegue reescrever ou apagar a trilha.
+	ctx := context.Background()
+	for _, sql := range []string{"UPDATE %s.audit_log SET description = 'x'", "DELETE FROM %s.audit_log", "TRUNCATE %s.audit_log"} {
+		if _, err := e.conn.Exec(ctx, fmt.Sprintf(sql, e.schema)); err == nil {
+			t.Errorf("a trilha aceitou: %s", sql)
+		}
+	}
 }
 
 func TestItemMustBelongToProject(t *testing.T) {

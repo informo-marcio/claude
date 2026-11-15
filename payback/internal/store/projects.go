@@ -65,12 +65,26 @@ type Item struct {
 	License     *License `json:"license"`
 }
 
-// Event é um registro do histórico de um projeto.
+// Event é um registro da trilha de auditoria.
 type Event struct {
-	ID          int64     `json:"id"`
-	UserName    string    `json:"userName"`
-	Description string    `json:"description"`
-	CreatedAt   time.Time `json:"createdAt"`
+	ID        int64  `json:"id"`
+	UserName  string `json:"userName"`
+	UserEmail string `json:"userEmail"`
+	// AsAdmin indica alteração feita por administrador em projeto alheio.
+	AsAdmin      bool      `json:"asAdmin"`
+	ProjectID    *int64    `json:"projectId"`
+	ProjectLabel *string   `json:"projectLabel"`
+	Description  string    `json:"description"`
+	CreatedAt    time.Time `json:"createdAt"`
+}
+
+// Actor é quem está fazendo uma alteração, para a trilha de auditoria.
+type Actor struct {
+	UserID int64
+	Email  string
+	Name   string
+	// AsAdmin é verdadeiro quando o administrador age sobre projeto alheio.
+	AsAdmin bool
 }
 
 // Share é uma concessão de leitura de um projeto.
@@ -97,9 +111,12 @@ func scanProject(row pgx.Row) (Project, error) {
 	return p, notFound(err)
 }
 
-func addEvent(ctx context.Context, tx pgx.Tx, projectID, userID int64, description string) error {
-	_, err := tx.Exec(ctx, `INSERT INTO project_events (project_id, user_id, description) VALUES ($1, $2, $3)`,
-		projectID, userID, description)
+// audit grava um registro na trilha, na mesma transação da alteração. Com
+// projectID, copia o rótulo do projeto como ele está naquele momento.
+func audit(ctx context.Context, tx pgx.Tx, a Actor, projectID *int64, description string) error {
+	_, err := tx.Exec(ctx, `INSERT INTO audit_log (user_id, user_email, user_name, as_admin, project_id, project_label, description)
+		VALUES ($1, $2, $3, $4, $5, (SELECT client_name || ' — ' || name FROM projects WHERE id = $5), $6)`,
+		a.UserID, a.Email, a.Name, a.AsAdmin, projectID, description)
 	return err
 }
 
@@ -139,20 +156,20 @@ func (s *Store) IsSharedWith(ctx context.Context, projectID, userID int64) (bool
 }
 
 // CreateProject grava um projeto novo e o primeiro evento do histórico.
-func (s *Store) CreateProject(ctx context.Context, p Project, userID int64) (Project, error) {
+func (s *Store) CreateProject(ctx context.Context, p Project, a Actor) (Project, error) {
 	var id int64
 	err := s.tx(ctx, func(tx pgx.Tx) error {
 		err := tx.QueryRow(ctx, `INSERT INTO projects (owner_id, client_name, name, status, is_test, duration_months,
 				monthly_revenue, implementation_revenue, expected_loss_rate, monthly_support_cost, exchange_rate,
 				dest_state, contract_start_date, deal_id, notes, settings_version_id)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::date, $14, $15, $16) RETURNING id`,
-			userID, p.ClientName, p.Name, p.Status, p.IsTest, p.DurationMonths, p.MonthlyRevenue,
+			a.UserID, p.ClientName, p.Name, p.Status, p.IsTest, p.DurationMonths, p.MonthlyRevenue,
 			p.ImplementationRevenue, p.ExpectedLossRate, p.MonthlySupportCost, p.ExchangeRate, p.DestState,
 			p.ContractStartDate, p.DealID, p.Notes, p.SettingsVersionID).Scan(&id)
 		if err != nil {
 			return err
 		}
-		return addEvent(ctx, tx, id, userID, "Projeto criado")
+		return audit(ctx, tx, a, &id, "Projeto criado")
 	})
 	if err != nil {
 		return Project{}, err
@@ -161,7 +178,7 @@ func (s *Store) CreateProject(ctx context.Context, p Project, userID int64) (Pro
 }
 
 // UpdateProject grava as alterações se a versão ainda for a que o usuário leu.
-func (s *Store) UpdateProject(ctx context.Context, p Project, userID int64, description string) (Project, error) {
+func (s *Store) UpdateProject(ctx context.Context, p Project, a Actor, description string) (Project, error) {
 	err := s.tx(ctx, func(tx pgx.Tx) error {
 		tag, err := tx.Exec(ctx, `UPDATE projects SET client_name = $3, name = $4, status = $5, is_test = $6,
 				duration_months = $7, monthly_revenue = $8, implementation_revenue = $9, expected_loss_rate = $10,
@@ -177,7 +194,7 @@ func (s *Store) UpdateProject(ctx context.Context, p Project, userID int64, desc
 		if tag.RowsAffected() == 0 {
 			return ErrConflict
 		}
-		return addEvent(ctx, tx, p.ID, userID, description)
+		return audit(ctx, tx, a, &p.ID, description)
 	})
 	if err != nil {
 		return Project{}, err
@@ -185,14 +202,22 @@ func (s *Store) UpdateProject(ctx context.Context, p Project, userID int64, desc
 	return s.Project(ctx, p.ID)
 }
 
-// DeleteProject apaga o projeto; itens, compartilhamentos e histórico caem em
-// cascata, na mesma transação do banco.
-func (s *Store) DeleteProject(ctx context.Context, id int64) error {
-	tag, err := s.pool.Exec(ctx, `DELETE FROM projects WHERE id = $1`, id)
-	if err == nil && tag.RowsAffected() == 0 {
-		return ErrNotFound
-	}
-	return err
+// DeleteProject apaga o projeto; itens e compartilhamentos caem em cascata. A
+// exclusão fica registrada na trilha de auditoria, que não é apagada.
+func (s *Store) DeleteProject(ctx context.Context, id int64, a Actor) error {
+	return s.tx(ctx, func(tx pgx.Tx) error {
+		if err := audit(ctx, tx, a, &id, "Projeto excluído"); err != nil {
+			return err
+		}
+		tag, err := tx.Exec(ctx, `DELETE FROM projects WHERE id = $1`, id)
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() == 0 {
+			return ErrNotFound
+		}
+		return nil
+	})
 }
 
 const itemColumns = `id, project_id, position, name, kind, quantity, unit_price::float8, currency, origin_state, imported,
@@ -267,7 +292,7 @@ func touchProject(ctx context.Context, tx pgx.Tx, projectID int64) error {
 }
 
 // CreateItem inclui um item ao fim da lista do projeto.
-func (s *Store) CreateItem(ctx context.Context, it Item, userID int64, description string) (Item, error) {
+func (s *Store) CreateItem(ctx context.Context, it Item, a Actor, description string) (Item, error) {
 	var out Item
 	err := s.tx(ctx, func(tx pgx.Tx) error {
 		args := append([]any{it.ProjectID, it.Name, it.Kind, it.Quantity, it.UnitPrice, it.Currency, it.OriginState, it.Imported},
@@ -284,13 +309,13 @@ func (s *Store) CreateItem(ctx context.Context, it Item, userID int64, descripti
 		if err := touchProject(ctx, tx, it.ProjectID); err != nil {
 			return err
 		}
-		return addEvent(ctx, tx, it.ProjectID, userID, description)
+		return audit(ctx, tx, a, &it.ProjectID, description)
 	})
 	return out, err
 }
 
 // UpdateItem altera um item; o item precisa pertencer ao projeto informado.
-func (s *Store) UpdateItem(ctx context.Context, it Item, userID int64, description string) (Item, error) {
+func (s *Store) UpdateItem(ctx context.Context, it Item, a Actor, description string) (Item, error) {
 	var out Item
 	err := s.tx(ctx, func(tx pgx.Tx) error {
 		args := append([]any{it.ID, it.ProjectID, it.Name, it.Kind, it.Quantity, it.UnitPrice, it.Currency, it.OriginState, it.Imported},
@@ -307,7 +332,7 @@ func (s *Store) UpdateItem(ctx context.Context, it Item, userID int64, descripti
 		if err := touchProject(ctx, tx, it.ProjectID); err != nil {
 			return err
 		}
-		return addEvent(ctx, tx, it.ProjectID, userID, description)
+		return audit(ctx, tx, a, &it.ProjectID, description)
 	})
 	return out, err
 }
@@ -319,7 +344,7 @@ func (s *Store) Item(ctx context.Context, projectID, itemID int64) (Item, error)
 }
 
 // DeleteItem remove um item do projeto.
-func (s *Store) DeleteItem(ctx context.Context, projectID, itemID, userID int64, description string) error {
+func (s *Store) DeleteItem(ctx context.Context, projectID, itemID int64, a Actor, description string) error {
 	return s.tx(ctx, func(tx pgx.Tx) error {
 		tag, err := tx.Exec(ctx, `DELETE FROM project_items WHERE id = $1 AND project_id = $2`, itemID, projectID)
 		if err != nil {
@@ -331,12 +356,12 @@ func (s *Store) DeleteItem(ctx context.Context, projectID, itemID, userID int64,
 		if err := touchProject(ctx, tx, projectID); err != nil {
 			return err
 		}
-		return addEvent(ctx, tx, projectID, userID, description)
+		return audit(ctx, tx, a, &projectID, description)
 	})
 }
 
 // DuplicateItem copia um item e posiciona a cópia logo abaixo do original.
-func (s *Store) DuplicateItem(ctx context.Context, projectID, itemID, userID int64) (Item, error) {
+func (s *Store) DuplicateItem(ctx context.Context, projectID, itemID int64, a Actor) (Item, error) {
 	var out Item
 	err := s.tx(ctx, func(tx pgx.Tx) error {
 		// Trava o projeto para que duas duplicações não disputem posições.
@@ -366,16 +391,15 @@ func (s *Store) DuplicateItem(ctx context.Context, projectID, itemID, userID int
 		if err := touchProject(ctx, tx, projectID); err != nil {
 			return err
 		}
-		return addEvent(ctx, tx, projectID, userID, "Item duplicado: "+out.Name)
+		return audit(ctx, tx, a, &projectID, "Item duplicado: "+out.Name)
 	})
 	return out, err
 }
 
-// Events devolve o histórico do projeto, do mais recente ao mais antigo.
-func (s *Store) Events(ctx context.Context, projectID int64) ([]Event, error) {
-	rows, err := s.pool.Query(ctx, `SELECT e.id, COALESCE(u.name, ''), e.description, e.created_at
-		FROM project_events e LEFT JOIN users u ON u.id = e.user_id
-		WHERE e.project_id = $1 ORDER BY e.id DESC LIMIT 200`, projectID)
+const eventColumns = `id, user_name, user_email, as_admin, project_id, project_label, description, created_at`
+
+func (s *Store) events(ctx context.Context, sql string, args ...any) ([]Event, error) {
+	rows, err := s.pool.Query(ctx, sql, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -383,12 +407,25 @@ func (s *Store) Events(ctx context.Context, projectID int64) ([]Event, error) {
 	out := []Event{}
 	for rows.Next() {
 		var e Event
-		if err := rows.Scan(&e.ID, &e.UserName, &e.Description, &e.CreatedAt); err != nil {
+		if err := rows.Scan(&e.ID, &e.UserName, &e.UserEmail, &e.AsAdmin, &e.ProjectID, &e.ProjectLabel, &e.Description, &e.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, e)
 	}
 	return out, rows.Err()
+}
+
+// Events devolve o histórico de um projeto, do mais recente ao mais antigo.
+func (s *Store) Events(ctx context.Context, projectID int64) ([]Event, error) {
+	return s.events(ctx, `SELECT `+eventColumns+` FROM audit_log WHERE project_id = $1 ORDER BY id DESC LIMIT 500`, projectID)
+}
+
+// AuditLog devolve a trilha completa, inclusive de projetos excluídos e de
+// alterações de política e catálogo. beforeID pagina para trás; zero começa
+// do registro mais recente.
+func (s *Store) AuditLog(ctx context.Context, beforeID int64, limit int) ([]Event, error) {
+	return s.events(ctx, `SELECT `+eventColumns+` FROM audit_log
+		WHERE $1 = 0 OR id < $1 ORDER BY id DESC LIMIT $2`, beforeID, limit)
 }
 
 // Shares lista com quem o projeto está compartilhado.
@@ -411,17 +448,26 @@ func (s *Store) Shares(ctx context.Context, projectID int64) ([]Share, error) {
 }
 
 // AddShare concede leitura do projeto a um usuário; repetir não é erro.
-func (s *Store) AddShare(ctx context.Context, projectID, userID int64) error {
-	_, err := s.pool.Exec(ctx, `INSERT INTO project_shares (project_id, user_id) VALUES ($1, $2)
-		ON CONFLICT DO NOTHING`, projectID, userID)
-	return err
+func (s *Store) AddShare(ctx context.Context, projectID int64, target User, a Actor) error {
+	return s.tx(ctx, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx, `INSERT INTO project_shares (project_id, user_id) VALUES ($1, $2)
+			ON CONFLICT DO NOTHING`, projectID, target.ID)
+		if err != nil || tag.RowsAffected() == 0 {
+			return err
+		}
+		return audit(ctx, tx, a, &projectID, "Projeto compartilhado com "+target.Email)
+	})
 }
 
 // RemoveShare retira a concessão de leitura.
-func (s *Store) RemoveShare(ctx context.Context, projectID, userID int64) error {
-	tag, err := s.pool.Exec(ctx, `DELETE FROM project_shares WHERE project_id = $1 AND user_id = $2`, projectID, userID)
-	if err == nil && tag.RowsAffected() == 0 {
-		return ErrNotFound
-	}
-	return err
+func (s *Store) RemoveShare(ctx context.Context, projectID, userID int64, a Actor) error {
+	return s.tx(ctx, func(tx pgx.Tx) error {
+		var email string
+		err := tx.QueryRow(ctx, `DELETE FROM project_shares s USING users u
+			WHERE s.project_id = $1 AND s.user_id = $2 AND u.id = s.user_id RETURNING u.email`, projectID, userID).Scan(&email)
+		if err != nil {
+			return notFound(err)
+		}
+		return audit(ctx, tx, a, &projectID, "Compartilhamento removido de "+email)
+	})
 }

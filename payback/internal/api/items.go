@@ -105,12 +105,12 @@ func describeItem(verb string, it store.Item) string {
 
 // respondDetail devolve o projeto atualizado, para a tela não precisar de uma
 // segunda chamada depois de alterar itens.
-func (s *Server) respondDetail(w http.ResponseWriter, r *http.Request, projectID int64, status int) error {
+func (s *Server) respondDetail(w http.ResponseWriter, r *http.Request, projectID int64, access string, status int) error {
 	p, err := s.store.Project(r.Context(), projectID)
 	if err != nil {
 		return err
 	}
-	d, err := s.detail(r, p, accessOwner)
+	d, err := s.detail(r, p, access)
 	if err != nil {
 		return err
 	}
@@ -119,7 +119,7 @@ func (s *Server) respondDetail(w http.ResponseWriter, r *http.Request, projectID
 }
 
 func (s *Server) createItem(w http.ResponseWriter, r *http.Request, u store.User) error {
-	p, err := s.ownedProject(r, u)
+	p, access, actor, err := s.editableProject(r, u)
 	if err != nil {
 		return err
 	}
@@ -131,14 +131,14 @@ func (s *Server) createItem(w http.ResponseWriter, r *http.Request, u store.User
 	if err != nil {
 		return err
 	}
-	if _, err := s.store.CreateItem(r.Context(), it, u.ID, describeItem("adicionado", it)); err != nil {
+	if _, err := s.store.CreateItem(r.Context(), it, actor, describeItem("adicionado", it)); err != nil {
 		return err
 	}
-	return s.respondDetail(w, r, p.ID, http.StatusCreated)
+	return s.respondDetail(w, r, p.ID, access, http.StatusCreated)
 }
 
 func (s *Server) updateItem(w http.ResponseWriter, r *http.Request, u store.User) error {
-	p, err := s.ownedProject(r, u)
+	p, access, actor, err := s.editableProject(r, u)
 	if err != nil {
 		return err
 	}
@@ -159,14 +159,14 @@ func (s *Server) updateItem(w http.ResponseWriter, r *http.Request, u store.User
 		return err
 	}
 	it.ID = itemID
-	if _, err := s.store.UpdateItem(r.Context(), it, u.ID, describeItem("alterado", it)); err != nil {
+	if _, err := s.store.UpdateItem(r.Context(), it, actor, describeItem("alterado", it)); err != nil {
 		return err
 	}
-	return s.respondDetail(w, r, p.ID, http.StatusOK)
+	return s.respondDetail(w, r, p.ID, access, http.StatusOK)
 }
 
 func (s *Server) deleteItem(w http.ResponseWriter, r *http.Request, u store.User) error {
-	p, err := s.ownedProject(r, u)
+	p, access, actor, err := s.editableProject(r, u)
 	if err != nil {
 		return err
 	}
@@ -178,14 +178,14 @@ func (s *Server) deleteItem(w http.ResponseWriter, r *http.Request, u store.User
 	if err != nil {
 		return err
 	}
-	if err := s.store.DeleteItem(r.Context(), p.ID, itemID, u.ID, describeItem("removido", existing)); err != nil {
+	if err := s.store.DeleteItem(r.Context(), p.ID, itemID, actor, describeItem("removido", existing)); err != nil {
 		return err
 	}
-	return s.respondDetail(w, r, p.ID, http.StatusOK)
+	return s.respondDetail(w, r, p.ID, access, http.StatusOK)
 }
 
 func (s *Server) duplicateItem(w http.ResponseWriter, r *http.Request, u store.User) error {
-	p, err := s.ownedProject(r, u)
+	p, access, actor, err := s.editableProject(r, u)
 	if err != nil {
 		return err
 	}
@@ -193,8 +193,8 @@ func (s *Server) duplicateItem(w http.ResponseWriter, r *http.Request, u store.U
 	if err != nil {
 		return err
 	}
-	if _, err := s.store.DuplicateItem(r.Context(), p.ID, itemID, u.ID); err != nil {
+	if _, err := s.store.DuplicateItem(r.Context(), p.ID, itemID, actor); err != nil {
 		return err
 	}
-	return s.respondDetail(w, r, p.ID, http.StatusCreated)
+	return s.respondDetail(w, r, p.ID, access, http.StatusCreated)
 }

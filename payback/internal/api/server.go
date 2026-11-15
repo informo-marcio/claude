@@ -69,6 +69,7 @@ func (s *Server) Handler() http.Handler {
 	route("GET /api/me", s.me)
 	route("GET /api/dashboard", s.dashboard)
 	route("GET /api/difal", s.difal)
+	route("GET /api/audit", s.auditLog)
 
 	route("GET /api/settings", s.getSettings)
 	route("PUT /api/settings", s.putSettings)
@@ -209,29 +210,35 @@ func (s *Server) projectFor(r *http.Request, u store.User) (store.Project, strin
 		return store.Project{}, "", err
 	}
 	switch {
-	case shared:
-		return p, accessShared, nil
 	case u.IsAdmin():
 		return p, accessAdmin, nil
+	case shared:
+		return p, accessShared, nil
 	}
 	return store.Project{}, "", errNotFound
 }
 
-// ownedProject exige que o usuário seja o dono; leitura não basta.
-func (s *Server) ownedProject(r *http.Request, u store.User) (store.Project, error) {
+// editableProject exige permissão de alteração: o dono ou um administrador.
+// Compartilhamento concede só leitura. O Actor devolvido marca quando é o
+// administrador agindo em projeto alheio, e vai para a trilha de auditoria.
+func (s *Server) editableProject(r *http.Request, u store.User) (store.Project, string, store.Actor, error) {
 	p, access, err := s.projectFor(r, u)
 	if err != nil {
-		return p, err
+		return p, access, store.Actor{}, err
 	}
-	if access != accessOwner {
-		return p, forbidden("Somente o dono do projeto pode alterá-lo.")
+	if access != accessOwner && access != accessAdmin {
+		return p, access, store.Actor{}, forbidden("Somente o dono do projeto ou um administrador pode alterá-lo.")
 	}
-	return p, nil
+	return p, access, actorFor(u, access == accessAdmin), nil
+}
+
+func actorFor(u store.User, asAdmin bool) store.Actor {
+	return store.Actor{UserID: u.ID, Email: u.Email, Name: u.Name, AsAdmin: asAdmin}
 }
 
 func requireAdmin(u store.User) error {
 	if !u.IsAdmin() {
-		return forbidden("Somente administradores podem alterar esta configuração.")
+		return forbidden("Acesso restrito a administradores.")
 	}
 	return nil
 }

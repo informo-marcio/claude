@@ -51,8 +51,12 @@ TEST_DATABASE_URL="postgres://usuario:senha@127.0.0.1:5432/payback_test" go test
   vigente; ao sair de rascunho o projeto congela a versão daquele momento.
 - **Análise bloqueada**: quando falta premissa (câmbio, data de início, consumo
   de pontos) a API devolve `blocked` com as pendências, nunca números parciais.
-- **Permissões**: o dono edita; compartilhamento e administrador só leem;
+- **Permissões**: o dono e o administrador editam; compartilhamento só lê;
   quem não tem acesso recebe 404. Política e catálogo são do administrador.
+- **Auditoria**: toda alteração (projeto, item, compartilhamento, política,
+  catálogo) grava quem fez, quando e se agiu como administrador em projeto
+  alheio, na mesma transação da alteração. A trilha sobrevive à exclusão do
+  projeto e o banco recusa alterá-la ou apagá-la.
 - **Concorrência**: projeto, política e catálogo recusam gravação feita sobre
   uma versão antiga (HTTP 409).
 - **Carteira**: `/api/dashboard` agrega por status e deixa de fora os projetos
@@ -67,7 +71,8 @@ TEST_DATABASE_URL="postgres://usuario:senha@127.0.0.1:5432/payback_test" go test
 | `POST /api/projects/{id}/items` e `PUT,DELETE .../items/{itemId}` | Itens |
 | `POST .../items/{itemId}/duplicate` | Duplicar item |
 | `GET,POST /api/projects/{id}/shares` e `DELETE .../shares/{userId}` | Compartilhamento por e-mail |
-| `GET /api/projects/{id}/events` | Histórico |
+| `GET /api/projects/{id}/events` | Histórico do projeto |
+| `GET /api/audit` | Trilha completa de auditoria (administrador) |
 | `GET,PUT /api/settings` | Política financeira |
 | `GET /api/catalog`, `PUT /api/catalog/programs/{key}`, `PUT /api/catalog/models/{id}` | Catálogo de pontos |
 | `GET /api/difal` | Calculadora de DIFAL |

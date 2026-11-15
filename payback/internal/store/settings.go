@@ -96,7 +96,7 @@ func (s *Store) SettingsByIDs(ctx context.Context, ids []int64) (map[int64]Setti
 // SaveSettings grava uma nova versão da política. baseID é a versão que o
 // administrador estava editando; se já houver outra mais nova, a gravação é
 // recusada para não sobrescrever a alteração de outra pessoa.
-func (s *Store) SaveSettings(ctx context.Context, baseID int64, p Policy, userID int64) (SettingsVersion, error) {
+func (s *Store) SaveSettings(ctx context.Context, baseID int64, p Policy, a Actor, description string) (SettingsVersion, error) {
 	payload, err := json.Marshal(p)
 	if err != nil {
 		return SettingsVersion{}, err
@@ -114,8 +114,11 @@ func (s *Store) SaveSettings(ctx context.Context, baseID int64, p Policy, userID
 			return ErrConflict
 		}
 		out, err = scanSettings(tx.QueryRow(ctx, `INSERT INTO settings_versions (payload, created_by)
-			VALUES ($1, $2) RETURNING id, payload, created_at`, payload, userID))
-		return err
+			VALUES ($1, $2) RETURNING id, payload, created_at`, payload, a.UserID))
+		if err != nil {
+			return err
+		}
+		return audit(ctx, tx, a, nil, description)
 	})
 	return out, err
 }

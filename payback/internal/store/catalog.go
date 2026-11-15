@@ -2,6 +2,10 @@ package store
 
 import (
 	"context"
+	"errors"
+	"fmt"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // Program é um programa de licenciamento por pontos.
@@ -81,35 +85,51 @@ func (s *Store) ModelWithProgram(ctx context.Context, id int64) (Model, Program,
 }
 
 // UpdateProgramPrice altera o preço do ponto se a revisão ainda for a lida.
-func (s *Store) UpdateProgramPrice(ctx context.Context, key string, priceUSD float64, revision int) (Program, error) {
+func (s *Store) UpdateProgramPrice(ctx context.Context, key string, priceUSD float64, revision int, a Actor) (Program, error) {
 	var p Program
-	err := s.pool.QueryRow(ctx, `UPDATE licensing_programs SET price_usd = $2, revision = revision + 1
-		WHERE key = $1 AND revision = $3
-		RETURNING key, manufacturer, name, price_usd::float8, revision`, key, priceUSD, revision).
-		Scan(&p.Key, &p.Manufacturer, &p.Name, &p.PriceUSD, &p.Revision)
-	if notFound(err) == ErrNotFound {
-		return p, s.missingOrConflict(ctx, `SELECT EXISTS (SELECT 1 FROM licensing_programs WHERE key = $1)`, key)
-	}
+	err := s.tx(ctx, func(tx pgx.Tx) error {
+		err := tx.QueryRow(ctx, `UPDATE licensing_programs SET price_usd = $2, revision = revision + 1
+			WHERE key = $1 AND revision = $3
+			RETURNING key, manufacturer, name, price_usd::float8, revision`, key, priceUSD, revision).
+			Scan(&p.Key, &p.Manufacturer, &p.Name, &p.PriceUSD, &p.Revision)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return missingOrConflict(ctx, tx, `SELECT EXISTS (SELECT 1 FROM licensing_programs WHERE key = $1)`, key)
+		}
+		if err != nil {
+			return err
+		}
+		return audit(ctx, tx, a, nil, fmt.Sprintf("Catálogo: preço do ponto de %s alterado para US$ %g", p.Name, p.PriceUSD))
+	})
 	return p, err
 }
 
 // UpdateModelConsumption altera consumo e pacote de serviços de um modelo se a
 // revisão ainda for a lida. dailyPoints nil volta o modelo a pendente.
-func (s *Store) UpdateModelConsumption(ctx context.Context, id int64, dailyPoints *float64, service string, revision int) (Model, error) {
+func (s *Store) UpdateModelConsumption(ctx context.Context, id int64, dailyPoints *float64, service string, revision int, a Actor) (Model, error) {
 	var m Model
-	err := s.pool.QueryRow(ctx, `UPDATE licensing_models SET daily_points = $2, service_description = $3, revision = revision + 1
-		WHERE id = $1 AND revision = $4 RETURNING `+modelColumns, id, dailyPoints, service, revision).
-		Scan(&m.ID, &m.ProgramKey, &m.Model, &m.Segment, &m.SortOrder, &m.DailyPoints, &m.ServiceDescription, &m.Revision)
-	if notFound(err) == ErrNotFound {
-		return m, s.missingOrConflict(ctx, `SELECT EXISTS (SELECT 1 FROM licensing_models WHERE id = $1)`, id)
-	}
+	err := s.tx(ctx, func(tx pgx.Tx) error {
+		err := tx.QueryRow(ctx, `UPDATE licensing_models SET daily_points = $2, service_description = $3, revision = revision + 1
+			WHERE id = $1 AND revision = $4 RETURNING `+modelColumns, id, dailyPoints, service, revision).
+			Scan(&m.ID, &m.ProgramKey, &m.Model, &m.Segment, &m.SortOrder, &m.DailyPoints, &m.ServiceDescription, &m.Revision)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return missingOrConflict(ctx, tx, `SELECT EXISTS (SELECT 1 FROM licensing_models WHERE id = $1)`, id)
+		}
+		if err != nil {
+			return err
+		}
+		consumption := "pendente"
+		if m.DailyPoints != nil {
+			consumption = fmt.Sprintf("%g ponto(s)/dia (%s)", *m.DailyPoints, m.ServiceDescription)
+		}
+		return audit(ctx, tx, a, nil, fmt.Sprintf("Catálogo: consumo de %s alterado para %s", m.Model, consumption))
+	})
 	return m, err
 }
 
 // missingOrConflict distingue "não existe" de "revisão desatualizada".
-func (s *Store) missingOrConflict(ctx context.Context, existsSQL string, arg any) error {
+func missingOrConflict(ctx context.Context, tx pgx.Tx, existsSQL string, arg any) error {
 	var exists bool
-	if err := s.pool.QueryRow(ctx, existsSQL, arg).Scan(&exists); err != nil {
+	if err := tx.QueryRow(ctx, existsSQL, arg).Scan(&exists); err != nil {
 		return err
 	}
 	if exists {
