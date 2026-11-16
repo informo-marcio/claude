@@ -378,6 +378,11 @@ export function ProjectPage() {
           ) : (
             <span className="tag tag-muted">{statusLabel[project.status]}</span>
           )}
+          {s && !empty && (
+            <a className="btn" href={`/api/projects/${project.id}/report.pdf`} download>
+              Baixar memória em PDF
+            </a>
+          )}
           {canEdit && (
             <button type="button" className="btn btn-quiet" aria-expanded={sharing} onClick={() => setSharing((v) => !v)}>
               Compartilhar

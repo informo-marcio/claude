@@ -1,6 +1,7 @@
 import { createContext, useContext } from "react";
 import { NavLink, Route, Routes } from "react-router-dom";
 import { api, User } from "./api";
+import logo from "./assets/logo-informo-branco.png";
 import { ErrorNote, Loading, useLoad } from "./ui";
 import { Portfolio } from "./pages/Portfolio";
 import { ProjectNew } from "./pages/ProjectNew";
@@ -50,7 +51,7 @@ export function App() {
       <div className="shell">
         <aside className="rail">
           <NavLink to="/" className="brand" aria-label="Informo, payback de locação">
-            <span className="brand-name">INFORMO</span>
+            <img src={logo} alt="Informo" className="brand-logo" width={156} height={22} />
             <span className="brand-sub">Payback de locação</span>
           </NavLink>
           <nav aria-label="Seções">

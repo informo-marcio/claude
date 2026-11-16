@@ -5,8 +5,10 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/informo-marcio/claude/payback/internal/finance"
+	"github.com/informo-marcio/claude/payback/internal/report"
 	"github.com/informo-marcio/claude/payback/internal/store"
 )
 
@@ -339,5 +341,52 @@ func (s *Server) simulate(w http.ResponseWriter, r *http.Request, u store.User) 
 	}
 	p.MonthlyRevenue = monthly
 	writeJSON(w, http.StatusOK, analyze(p, items, sv))
+	return nil
+}
+
+// reportPDF devolve a memória de cálculo do projeto em PDF. Usa exatamente a
+// análise que a tela mostra; quem pode ler o projeto pode baixar.
+func (s *Server) reportPDF(w http.ResponseWriter, r *http.Request, u store.User) error {
+	p, _, err := s.projectFor(r, u)
+	if err != nil {
+		return err
+	}
+	items, err := s.store.Items(r.Context(), p.ID)
+	if err != nil {
+		return err
+	}
+	sv, err := s.projectSettings(r, p)
+	if err != nil {
+		return err
+	}
+	a := analyze(p, items, sv)
+	if a.Status != "ready" {
+		return badRequest("O relatório só pode ser gerado com a análise completa.", a.Blockers...)
+	}
+	if len(items) == 0 {
+		return badRequest("Adicione os itens da proposta antes de gerar o relatório.")
+	}
+	in := report.Input{
+		Project: p, Items: items, Capex: *a.Capex, Licensing: *a.Licensing, Scenarios: *a.Scenarios,
+		Health: *a.Health, IRR: *a.IRR, Policy: sv.Policy.Settings, SettingsVersionID: sv.ID,
+		GeneratedBy: u.Name, GeneratedAt: time.Now(),
+	}
+	if in.GeneratedBy == "" {
+		in.GeneratedBy = u.Email
+	}
+	for _, row := range a.Sensitivity {
+		in.Sensitivity = append(in.Sensitivity, report.SensitivityRow{
+			Delta: row.Delta, MonthlyRevenue: row.MonthlyRevenue, NPV: row.NPV,
+			PaybackMonth: row.PaybackMonth, Viability: row.Viability,
+		})
+	}
+	pdf, err := report.ProjectPDF(in)
+	if err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/pdf")
+	w.Header().Set("Content-Disposition", `attachment; filename="`+report.FileName(p)+`"`)
+	w.Header().Set("Content-Length", strconv.Itoa(len(pdf)))
+	w.Write(pdf) //nolint:errcheck // cliente desconectado
 	return nil
 }

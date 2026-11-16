@@ -749,3 +749,43 @@ func TestSensitivityAndSimulation(t *testing.T) {
 	e.must(http.StatusNotFound, other, "GET", path+"/simulate?monthlyRevenue=2000", nil, nil)
 	e.must(http.StatusNotFound, owner, "GET", "/api/nao-existe", nil, nil)
 }
+
+func TestReportPDF(t *testing.T) {
+	e := newEnv(t)
+	d := e.createProject(owner, baseProject())
+	path := fmt.Sprintf("/api/projects/%d/report.pdf", d.Project.ID)
+
+	// Sem itens não há o que relatar.
+	e.must(http.StatusUnprocessableEntity, owner, "GET", path, nil, nil)
+	e.addItem(owner, d.Project.ID, map[string]any{"name": "Fortinet 90G", "kind": "hardware", "quantity": 1, "unitPrice": 9000, "originState": "SP"})
+
+	get := func(user string) *http.Response {
+		req, _ := http.NewRequest("GET", e.srv.URL+path, nil)
+		req.Header.Set("X-Test-User", user)
+		res, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return res
+	}
+	res := get(owner)
+	body, _ := io.ReadAll(res.Body)
+	res.Body.Close()
+	if res.StatusCode != http.StatusOK || res.Header.Get("Content-Type") != "application/pdf" || !bytes.HasPrefix(body, []byte("%PDF-")) {
+		t.Fatalf("relatório: status %d, tipo %q, %d bytes", res.StatusCode, res.Header.Get("Content-Type"), len(body))
+	}
+	if cd := res.Header.Get("Content-Disposition"); cd != `attachment; filename="memoria-de-calculo-zopone-fortigate-90g.pdf"` {
+		t.Errorf("nome do arquivo: %s", cd)
+	}
+
+	// Quem não pode ler o projeto não baixa o relatório.
+	res = get(other)
+	res.Body.Close()
+	if res.StatusCode != http.StatusNotFound {
+		t.Errorf("relatório para estranho: status %d", res.StatusCode)
+	}
+
+	// Análise bloqueada não gera PDF com números parciais.
+	e.addItem(owner, d.Project.ID, map[string]any{"name": "FortiFlex 40F", "kind": "points_license", "quantity": 1, "modelId": 2})
+	e.must(http.StatusUnprocessableEntity, owner, "GET", path, nil, nil)
+}

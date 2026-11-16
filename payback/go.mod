@@ -5,6 +5,7 @@ go 1.24
 require (
 	github.com/coreos/go-oidc/v3 v3.11.0
 	github.com/go-jose/go-jose/v4 v4.0.2
+	github.com/go-pdf/fpdf v0.9.0
 	github.com/jackc/pgx/v5 v5.7.6
 	golang.org/x/oauth2 v0.24.0
 )

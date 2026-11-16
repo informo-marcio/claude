@@ -1,29 +1,32 @@
-/* Identidade: trilho azul-marinho da marca, área de trabalho em papel frio e
-   o verde-água da Informo como única cor de ação. Verde, âmbar e vermelho
-   ficam reservados à decisão financeira e sempre acompanham um texto. */
+/* Identidade conforme o Guia de Identidade Visual da Informo: preto e verde
+   institucional (#009aa3), tipografia Roboto e logotipo em preto e branco
+   negativo sobre fundo escuro. O verde institucional não tem contraste para
+   texto pequeno sobre branco, então links e botões usam um tom mais escuro
+   derivado dele. Verde, âmbar e vermelho de decisão sempre acompanham texto. */
 
 :root {
-  --rail: #0b2030;
-  --rail-ink: #c5d3dc;
-  --rail-dim: #7f95a3;
-  --paper: #f3f6f7;
+  --rail: #000000;
+  --rail-ink: #d6d9da;
+  --rail-dim: #8e9597;
+  --paper: #f4f6f6;
   --surface: #ffffff;
-  --ink: #0f2230;
-  --muted: #566772;
-  --rule: #d5dee3;
-  --rule-soft: #e6ecef;
-  --teal: #0a7a76;
-  --teal-strong: #075f5c;
-  --teal-bright: #2cc4bc;
-  --teal-tint: #e3f3f2;
+  --ink: #111517;
+  --muted: #586367;
+  --rule: #d6dcdd;
+  --rule-soft: #e7ebec;
+  --brand: #009aa3;
+  --teal: #007a82;
+  --teal-strong: #005f66;
+  --teal-bright: #19b3bd;
+  --teal-tint: #e0f3f4;
   --good: #1b7a52;
   --good-tint: #e2f2ea;
   --warn: #8f5804;
   --warn-tint: #fbefd9;
   --bad: #b2382c;
   --bad-tint: #fbe6e3;
-  --display: "Archivo Variable", "Arial Narrow", Arial, sans-serif;
-  --body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --display: "Roboto", "Lucida Sans", "Lucida Grande", sans-serif;
+  --body: "Roboto", "Lucida Sans", "Lucida Grande", sans-serif;
 }
 
 * {
@@ -48,8 +51,7 @@ h1,
 h2,
 h3 {
   font-family: var(--display);
-  font-stretch: 112%;
-  font-weight: 600;
+  font-weight: 700;
   line-height: 1.2;
   margin: 0;
 }
@@ -60,7 +62,8 @@ h1 {
 }
 
 h2 {
-  font-size: 1.1rem;
+  font-size: 1.12rem;
+  font-weight: 500;
 }
 
 h3 {
@@ -113,20 +116,18 @@ a:hover {
   color: #fff;
 }
 
-.brand-name {
+/* O logotipo mantém a proporção original e uma área livre ao redor. */
+.brand-logo {
   display: block;
-  font-family: var(--display);
-  font-stretch: 125%;
-  font-weight: 700;
-  font-size: 1.45rem;
-  letter-spacing: 0.04em;
+  width: 156px;
+  height: auto;
 }
 
 .brand-sub {
   display: block;
-  color: var(--teal-bright);
+  color: var(--rail-dim);
   font-size: 0.86rem;
-  margin-top: 0.1rem;
+  margin-top: 0.9rem;
 }
 
 .rail nav {
@@ -149,7 +150,7 @@ a:hover {
 }
 
 .rail nav a.active {
-  background: rgba(44, 196, 188, 0.16);
+  background: rgba(0, 154, 163, 0.34);
   color: #fff;
   font-weight: 500;
 }
@@ -260,7 +261,6 @@ a:hover {
 .h1-sub {
   display: block;
   font-family: var(--body);
-  font-stretch: 100%;
   font-weight: 400;
   font-size: 1.05rem;
   letter-spacing: 0;
@@ -540,7 +540,7 @@ textarea.input {
   padding: 0.1rem 0.55rem;
   border-radius: 3px;
   font-size: 0.82rem;
-  font-weight: 600;
+  font-weight: 500;
   white-space: nowrap;
 }
 
@@ -589,7 +589,7 @@ textarea.input {
 
 .tab[aria-selected="true"] {
   color: var(--ink);
-  border-bottom-color: var(--teal);
+  border-bottom-color: var(--brand);
 }
 
 .tab-count {
@@ -605,15 +605,14 @@ textarea.input {
 
 .summary-line {
   font-family: var(--display);
-  font-stretch: 108%;
-  font-size: 1.45rem;
+  font-size: 1.5rem;
   line-height: 1.35;
-  font-weight: 400;
+  font-weight: 300;
   margin-bottom: 1rem;
 }
 
 .summary-line strong {
-  font-weight: 650;
+  font-weight: 700;
 }
 
 .mix {
@@ -693,7 +692,7 @@ textarea.input {
 .table caption {
   text-align: left;
   padding: 0.8rem 0.9rem 0.3rem;
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .table th,
@@ -719,7 +718,7 @@ textarea.input {
 .table tfoot td {
   border-top: 1px solid var(--rule);
   border-bottom: 0;
-  font-weight: 600;
+  font-weight: 500;
   background: #fafcfc;
 }
 
@@ -776,7 +775,7 @@ textarea.input {
 
 .row-client {
   display: block;
-  font-weight: 600;
+  font-weight: 500;
   color: var(--ink);
 }
 
@@ -870,10 +869,9 @@ textarea.input {
 }
 
 .verdict h2 {
-  font-size: 2.5rem;
-  font-stretch: 120%;
+  font-size: 2.6rem;
   font-weight: 700;
-  letter-spacing: -0.015em;
+  letter-spacing: -0.02em;
 }
 
 .verdict-good h2 {
@@ -930,15 +928,13 @@ textarea.input {
 .verdict-facts dd {
   margin: 0;
   font-family: var(--display);
-  font-stretch: 108%;
   font-size: 1.3rem;
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .fact-note {
   display: block;
   font-family: var(--body);
-  font-stretch: 100%;
   font-size: 0.85rem;
   font-weight: 400;
   color: var(--muted);
@@ -1017,7 +1013,7 @@ textarea.input {
 .ledger-strong dt,
 .ledger-strong dd {
   color: var(--ink);
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .ledger-gap {
@@ -1054,8 +1050,7 @@ textarea.input {
 .details > summary {
   cursor: pointer;
   font-family: var(--display);
-  font-stretch: 112%;
-  font-weight: 600;
+  font-weight: 500;
   font-size: 1.1rem;
   padding: 0.5rem 0;
   border-bottom: 1px solid var(--rule);
@@ -1064,7 +1059,6 @@ textarea.input {
 
 .fieldset .details > summary {
   font-family: var(--body);
-  font-stretch: 100%;
   font-size: 1rem;
   font-weight: 500;
 }
@@ -1198,7 +1192,7 @@ textarea.input {
 .chart-label {
   fill: var(--ink);
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 500;
   font-family: var(--body);
   paint-order: stroke;
   stroke: var(--surface);
@@ -1231,7 +1225,7 @@ textarea.input {
 }
 
 .chart-tip-title {
-  font-weight: 600;
+  font-weight: 500;
 }
 
 /* ---------- Telas menores ---------- */

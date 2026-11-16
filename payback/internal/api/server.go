@@ -88,6 +88,7 @@ func (s *Server) Handler(extra ...func(*http.ServeMux)) http.Handler {
 	route("DELETE /api/projects/{id}", s.deleteProject)
 	route("GET /api/projects/{id}/events", s.listEvents)
 	route("GET /api/projects/{id}/simulate", s.simulate)
+	route("GET /api/projects/{id}/report.pdf", s.reportPDF)
 
 	route("POST /api/projects/{id}/items", s.createItem)
 	route("PUT /api/projects/{id}/items/{itemId}", s.updateItem)

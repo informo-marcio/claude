@@ -20,7 +20,8 @@ a versão criada no Manus (`payback.informo.com.br`).
 - [x] Banco de dados (`internal/store`) e API (`internal/api`)
 - [x] Login pelo Microsoft Entra ID (`internal/auth`)
 - [x] Interface React (`web/`), embutida no binário
-- [ ] Relatório PDF e Excel
+- [x] Relatório em PDF (`internal/report`)
+- [ ] Exportação para Excel
 - [ ] Empacotamento Docker
 
 ## Como rodar em desenvolvimento
@@ -50,10 +51,30 @@ cd web && npm run dev   # desenvolvimento, com proxy para o servidor em :8080
   calculadora de DIFAL, catálogo de pontos, política financeira e auditoria.
 - **Sem cálculo no navegador**: a interface só exibe o que a API devolve.
   Simulação e sensibilidade também são calculadas no servidor.
-- **Fontes locais**: Archivo e IBM Plex Sans vão no pacote; a página não
-  carrega nada de terceiros e a política de segurança de conteúdo proíbe.
-- **Logotipo**: o nome "INFORMO" está em texto. Falta trocar pelo arquivo
-  oficial da marca.
+- **Fontes locais**: a Roboto vai no pacote; a página não carrega nada de
+  terceiros, e a política de segurança de conteúdo proíbe.
+
+## Identidade visual
+
+Segue o Guia de Identidade Visual da Informo:
+
+- **Logotipo**: arquivos oficiais, sem redesenho. Versão em cores sobre branco
+  (PDF) e versão preto e branco negativa sobre o menu preto.
+- **Cores**: preto e verde institucional `#009aa3`. Esse verde não tem contraste
+  suficiente para texto pequeno sobre branco, então links e botões usam um tom
+  mais escuro derivado dele (`#007a82`).
+- **Tipografia**: Roboto (Light, Regular, Medium e Bold), na interface e no PDF.
+- Verde, âmbar e vermelho de decisão não são cores da marca: indicam o estado
+  financeiro e sempre acompanham um texto.
+
+## Relatório em PDF
+
+`GET /api/projects/{id}/report.pdf` devolve a memória de cálculo em A4, gerada no
+servidor a partir da mesma análise que a tela mostra, com a Roboto embutida:
+decisão, gráfico de payback, condições, memória de cálculo, investimento e
+comissões, indicadores, itens, mensalidade e sensibilidade, fluxo mês a mês e
+premissas. É um documento de uso interno (mostra margens e comissões). Só é
+gerado com a análise completa, e quem pode ler o projeto pode baixar.
 
 ## Login
 
@@ -110,6 +131,7 @@ TEST_DATABASE_URL="postgres://usuario:senha@127.0.0.1:5432/payback_test" go test
 | `GET,POST /api/projects/{id}/shares` e `DELETE .../shares/{userId}` | Compartilhamento por e-mail |
 | `GET /api/projects/{id}/events` | Histórico do projeto |
 | `GET /api/projects/{id}/simulate?monthlyRevenue=` | Simular outra mensalidade, sem gravar |
+| `GET /api/projects/{id}/report.pdf` | Memória de cálculo em PDF |
 | `GET /api/audit` | Trilha completa de auditoria (administrador) |
 | `GET,PUT /api/settings` | Política financeira |
 | `GET /api/catalog`, `PUT /api/catalog/programs/{key}`, `PUT /api/catalog/models/{id}` | Catálogo de pontos |
