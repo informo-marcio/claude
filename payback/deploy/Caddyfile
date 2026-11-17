@@ -1,0 +1,10 @@
+# HTTPS automático (Let's Encrypt) para o portal. Exige que o DNS do domínio
+# aponte para este servidor e que as portas 80 e 443 estejam abertas.
+{
+	email {$ACME_EMAIL}
+}
+
+{$DOMAIN} {
+	encode zstd gzip
+	reverse_proxy app:8080
+}

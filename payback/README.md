@@ -22,7 +22,19 @@ a versão criada no Manus (`payback.informo.com.br`).
 - [x] Interface React (`web/`), embutida no binário
 - [x] Relatório em PDF (`internal/report`)
 - [ ] Exportação para Excel
-- [ ] Empacotamento Docker
+- [x] Empacotamento Docker (`Dockerfile` e `deploy/`)
+
+## Instalação no servidor
+
+Docker Compose com aplicação, PostgreSQL, backup diário e Caddy opcional para
+HTTPS. O passo a passo está em [`deploy/INSTALACAO.md`](deploy/INSTALACAO.md).
+
+- **Imagem**: construída do zero (`scratch`), com só o binário e os
+  certificados raiz, cerca de 24 MB. Roda como usuário sem privilégios, com o
+  sistema de arquivos somente leitura e sem capacidades do kernel.
+- **Verificação de saúde**: `payback healthcheck`, o próprio binário, porque a
+  imagem não tem shell nem curl.
+- **Rede**: o banco fica numa rede interna sem saída e sem porta publicada.
 
 ## Como rodar em desenvolvimento
 

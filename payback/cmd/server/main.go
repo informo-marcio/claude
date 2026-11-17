@@ -20,7 +20,16 @@ import (
 	"github.com/informo-marcio/claude/payback/internal/webui"
 )
 
+// version é preenchida na compilação (-ldflags "-X main.version=...").
+var version = "dev"
+
 func main() {
+	// "payback healthcheck" consulta o próprio servidor e sai com 0 ou 1. A
+	// imagem não tem shell nem curl, então a verificação de saúde do contêiner
+	// usa o próprio binário.
+	if len(os.Args) > 1 && os.Args[1] == "healthcheck" {
+		os.Exit(healthcheck())
+	}
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	if err := run(log); err != nil {
 		log.Error("servidor encerrado com erro", "err", err)
@@ -84,11 +93,29 @@ func run(log *slog.Logger) error {
 		defer cancel()
 		srv.Shutdown(shutdownCtx) //nolint:errcheck // encerrando
 	}()
-	log.Info("portal no ar", "addr", addr)
+	log.Info("portal no ar", "addr", addr, "versao", version)
 	if err := srv.Serve(ln); !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
 	return nil
+}
+
+// healthcheck consulta /healthz no endereço local em que o servidor escuta.
+func healthcheck() int {
+	_, port, err := net.SplitHostPort(env("LISTEN_ADDR", "127.0.0.1:8080"))
+	if err != nil {
+		return 1
+	}
+	client := http.Client{Timeout: 3 * time.Second}
+	res, err := client.Get("http://127.0.0.1:" + port + "/healthz")
+	if err != nil {
+		return 1
+	}
+	res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		return 1
+	}
+	return 0
 }
 
 // chooseAuthenticator escolhe como identificar o usuário. Com as variáveis

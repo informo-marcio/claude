@@ -1,0 +1,121 @@
+# Portal de payback da Informo: aplicação, PostgreSQL, backup diário e,
+# opcionalmente, o Caddy para HTTPS. Veja INSTALACAO.md.
+#
+#   docker compose up -d --build                     # sem Caddy (proxy próprio)
+#   docker compose --profile caddy up -d --build     # com Caddy e HTTPS automático
+
+name: payback
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+services:
+  app:
+    build:
+      context: ..
+      args:
+        VERSION: ${VERSION:-dev}
+    image: informo/payback:${VERSION:-dev}
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://payback:${POSTGRES_PASSWORD:?defina POSTGRES_PASSWORD no .env}@db:5432/payback?sslmode=disable
+      LISTEN_ADDR: 0.0.0.0:8080
+      PUBLIC_URL: https://${DOMAIN:?defina DOMAIN no .env}
+      ENTRA_TENANT_ID: ${ENTRA_TENANT_ID:?defina ENTRA_TENANT_ID no .env}
+      ENTRA_CLIENT_ID: ${ENTRA_CLIENT_ID:?defina ENTRA_CLIENT_ID no .env}
+      ENTRA_CLIENT_SECRET: ${ENTRA_CLIENT_SECRET:?defina ENTRA_CLIENT_SECRET no .env}
+      SESSION_HOURS: ${SESSION_HOURS:-12}
+      ADMIN_EMAILS: ${ADMIN_EMAILS:-}
+      # Só se o servidor sai para a internet por um proxy corporativo.
+      HTTPS_PROXY: ${HTTPS_PROXY:-}
+      NO_PROXY: db,localhost,127.0.0.1
+    # Para um proxy reverso já existente no mesmo servidor. Fica só no
+    # localhost; o acesso de fora passa pelo proxy (ou pelo Caddy).
+    ports:
+      - "127.0.0.1:${APP_PORT:-8080}:8080"
+    networks: [backend, edge]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    logging: *logging
+
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: payback
+      POSTGRES_DB: payback
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?defina POSTGRES_PASSWORD no .env}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    # Sem porta publicada: o banco só é alcançável pela rede interna.
+    networks: [backend]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U payback -d payback"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    logging: *logging
+
+  backup:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PGHOST: db
+      PGUSER: payback
+      PGDATABASE: payback
+      PGPASSWORD: ${POSTGRES_PASSWORD:?defina POSTGRES_PASSWORD no .env}
+      BACKUP_HOUR: ${BACKUP_HOUR:-2}
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-30}
+      # Horário de Brasília (UTC-3, sem horário de verão). O formato POSIX
+      # dispensa a base de fusos, que a imagem alpine pode não ter.
+      TZ: "<-03>3"
+    volumes:
+      - ./backup.sh:/backup.sh:ro
+      - ${BACKUP_DIR:-./backups}:/backups
+    entrypoint: ["/bin/sh", "/backup.sh"]
+    command: ["loop"]
+    networks: [backend]
+    logging: *logging
+
+  caddy:
+    image: caddy:2-alpine
+    profiles: [caddy]
+    restart: unless-stopped
+    depends_on: [app]
+    environment:
+      DOMAIN: ${DOMAIN:?defina DOMAIN no .env}
+      # Obrigatório com o Caddy; vazio, o Caddy não inicia. Não é exigido
+      # aqui para não bloquear quem usa um proxy próprio.
+      ACME_EMAIL: ${ACME_EMAIL:-}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks: [edge]
+    logging: *logging
+
+networks:
+  # Rede só entre aplicação, banco e backup, sem saída para a internet.
+  backend:
+    internal: true
+  # Rede com saída: a aplicação precisa falar com o login da Microsoft.
+  edge: {}
+
+volumes:
+  db-data:
+  caddy-data:
+  caddy-config:

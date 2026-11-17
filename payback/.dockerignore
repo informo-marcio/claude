@@ -1,0 +1,11 @@
+# Só o código-fonte entra no contexto de build.
+bin/
+deploy/
+web/node_modules/
+web/dist/
+internal/webui/dist/*
+!internal/webui/dist/.keep
+.env
+*.env
+Dockerfile
+.dockerignore
